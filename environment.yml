@@ -1,4 +1,4 @@
-name: nyc-taxi
+name: ecom_sales
 channels:
   - conda-forge
 dependencies:
