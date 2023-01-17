@@ -4,7 +4,7 @@
 
 #### Move into top-level directory
 ```
-cd Data-Engineering-Project
+cd Ecommerce-Dashboard
 
 ```
 
