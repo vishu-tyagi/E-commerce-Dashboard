@@ -4,9 +4,10 @@ import logging
 
 import boto3
 import pandas as pd
+from sqlalchemy.engine.base import Engine
 
 from ecom_sales.config import EcomConfig
-from ecom_sales.data_access.helpers import s3_download
+from ecom_sales.data_access.helpers import s3_download, upload_to_postgres
 from ecom_sales.utils import timing
 from ecom_sales.utils.constants import (
     DATA_DIR
@@ -28,18 +29,39 @@ class DataPipeline():
             dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Created data directory {self.data_path}")
 
-    @timing
-    def extract(self):
-        logger.info(f"Fetching raw data ...")
-        s3_client = boto3.client(
-            "s3",
-            aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"]
+    def extract(self, client: boto3.client, dataset: str):
+        logger.info(f"Fetching dataset {dataset} ...")
+        for fname in self.config.S3_BUCKET_RELEVANT_FILES[dataset]:
+            s3_download(
+                client=client,
+                bucket=self.s3_bucket,
+                filename=self.config.S3_BUCKET_RELEVANT_FILES[dataset][fname],
+                outpath=os.path.join(self.data_path, fname)
+            )
+
+    def load(
+        self,
+        dataset: str,
+        engine: Engine,
+        schema: str
+    ):
+        logger.info(
+            f"Ingesting {dataset} into table {schema}.{dataset} on {engine.url} ..."
         )
-        s3_download(
-            s3_client,
-            self.s3_bucket,
-            self.config.S3_BUCKET_RELEVANT_FILES,
-            self.data_path
-        )
-        logger.info(f"Data available at {self.data_path}")
+        if_table_exists = "replace"
+        nrows = 0
+        for fname in self.config.S3_BUCKET_RELEVANT_FILES[dataset]:
+            df = pd.read_csv(os.path.join(self.data_path, fname))
+            df.columns = [c.lower() for c in df.columns]
+            upload_to_postgres(
+                df=df,
+                engine=engine,
+                schema=schema,
+                table=dataset,
+                if_table_exists=if_table_exists,
+                chunksize=10000,
+                filename=fname
+            )
+            if_table_exists = "append"
+            nrows += df.shape[0]
+        logger.info(f"Completed ingesting {nrows} rows")
